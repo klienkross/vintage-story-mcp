@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using VintageStoryAgent;
 using VintageStoryAgent.Protocol;
+using Vintagestory.API.Client;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
@@ -11,6 +13,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("player unavailable stable contract", PlayerUnavailable),
     ("server options bind loopback only", LoopbackOnly),
     ("snapshot provider crosses dispatcher seam", SnapshotUsesDispatcher),
+    ("state request timeout cancels provider", StateRequestTimeoutCancelsProvider),
+    ("dispatcher skips late action after cancellation", DispatcherSkipsLateActionAfterCancellation),
     ("dispose stops accepting requests", DisposeStopsRequests)
 };
 
@@ -99,6 +103,51 @@ static async Task SnapshotUsesDispatcher()
     Assert(result.Error?.Code == "player_unavailable", "result must propagate");
 }
 
+static async Task StateRequestTimeoutCancelsProvider()
+{
+    int port = ReservePort();
+    var provider = new NeverCompletingProvider();
+    var options = AgentHttpServerOptions.ForLoopback(port, TimeSpan.FromMilliseconds(150));
+    using var server = new AgentHttpServer(options, provider);
+    server.Start();
+
+    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+    var stopwatch = Stopwatch.StartNew();
+    using var response = await client.GetAsync(new Uri($"http://127.0.0.1:{port}/v1/state"));
+    stopwatch.Stop();
+
+    Assert(response.StatusCode == HttpStatusCode.ServiceUnavailable, "state timeout must return HTTP 503");
+    using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    Assert(doc.RootElement.GetProperty("code").GetString() == "state_timeout", "wrong timeout error code");
+    Assert(stopwatch.Elapsed < TimeSpan.FromSeconds(1), "server must enforce its own bounded request deadline");
+    await provider.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(1));
+}
+
+static async Task DispatcherSkipsLateActionAfterCancellation()
+{
+    var api = new QueuedClientApi();
+    var dispatcher = new VintageStoryMainThreadDispatcher(api);
+    using var cts = new CancellationTokenSource();
+    int readCount = 0;
+
+    ValueTask<int> pending = dispatcher.InvokeAsync(() =>
+    {
+        readCount++;
+        return 42;
+    }, cts.Token);
+
+    Assert(api.Events.PendingCount == 1, "main-thread callback must be queued");
+    cts.Cancel();
+
+    bool canceled = false;
+    try { _ = await pending.AsTask(); }
+    catch (OperationCanceledException) { canceled = true; }
+    Assert(canceled, "dispatcher completion must observe cancellation");
+
+    api.Events.RunNext();
+    Assert(readCount == 0, "late main-thread callback must not execute reader action after cancellation");
+}
+
 static async Task DisposeStopsRequests()
 {
     int port = ReservePort();
@@ -143,6 +192,25 @@ sealed class FixedProvider(AgentStateResult result) : IAgentStateProvider
     public ValueTask<AgentStateResult> GetStateAsync(CancellationToken cancellationToken) => ValueTask.FromResult(result);
 }
 
+sealed class NeverCompletingProvider : IAgentStateProvider
+{
+    public TaskCompletionSource<bool> CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async ValueTask<AgentStateResult> GetStateAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            CancellationObserved.TrySetResult(true);
+            throw;
+        }
+    }
+}
+
 sealed class FixedReader(AgentStateResult result) : IAgentStateReader
 {
     public int ReadCount { get; private set; }
@@ -156,5 +224,25 @@ sealed class RecordingDispatcher : IMainThreadDispatcher
     {
         InvocationCount++;
         return ValueTask.FromResult(action());
+    }
+}
+
+sealed class QueuedClientApi : ICoreClientAPI
+{
+    public QueuedClientEvents Events { get; } = new();
+    public IClientEventAPI Event => Events;
+}
+
+sealed class QueuedClientEvents : IClientEventAPI
+{
+    private readonly Queue<Action> pending = new();
+    public int PendingCount => pending.Count;
+
+    public void EnqueueMainThreadTask(Action action, string code) => pending.Enqueue(action);
+
+    public void RunNext()
+    {
+        if (pending.Count == 0) throw new InvalidOperationException("no queued callback");
+        pending.Dequeue()();
     }
 }

@@ -10,5 +10,6 @@
     <Compile Include="../../mod/src/AgentContracts.cs" Link="Production/AgentContracts.cs" />
     <Compile Include="../../mod/src/AgentStateSnapshotProvider.cs" Link="Production/AgentStateSnapshotProvider.cs" />
     <Compile Include="../../mod/src/AgentHttpServer.cs" Link="Production/AgentHttpServer.cs" />
+    <Compile Include="../../mod/src/VintageStoryMainThreadDispatcher.cs" Link="Production/VintageStoryMainThreadDispatcher.cs" />
   </ItemGroup>
 </Project>
