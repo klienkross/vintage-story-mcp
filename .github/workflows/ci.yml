@@ -31,4 +31,5 @@ jobs:
           python-version: '3.13'
 
       - name: Run Python probe tests
-        run: python -m unittest client/test_probe.py
+        working-directory: client
+        run: python -m unittest test_probe.py
