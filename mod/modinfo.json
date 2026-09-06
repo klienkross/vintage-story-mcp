@@ -1,0 +1,8 @@
+{
+  "type": "code",
+  "modid": "vintagestoryagent",
+  "name": "Vintage Story Agent",
+  "authors": ["klienkross"],
+  "description": "Experimental localhost observation bridge for Vintage Story.",
+  "version": "0.0.1"
+}
