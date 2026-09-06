@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - task/first-eye
+  pull_request:
+
+jobs:
+  transport-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run C# transport tests
+        run: dotnet run --project tests/VintageStoryAgent.Tests/VintageStoryAgent.Tests.csproj
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Run Python probe tests
+        run: python -m unittest client/test_probe.py
