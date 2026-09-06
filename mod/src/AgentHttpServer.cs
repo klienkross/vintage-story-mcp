@@ -5,16 +5,24 @@ using VintageStoryAgent.Protocol;
 
 namespace VintageStoryAgent;
 
-public sealed record AgentHttpServerOptions(string Prefix)
+public sealed record AgentHttpServerOptions(string Prefix, TimeSpan StateRequestTimeout)
 {
     public const int DefaultPort = 42420;
+    public static readonly TimeSpan DefaultStateRequestTimeout = TimeSpan.FromSeconds(2);
 
-    public static AgentHttpServerOptions CreateDefault() => ForLoopback(DefaultPort);
+    public static AgentHttpServerOptions CreateDefault() => ForLoopback(DefaultPort, DefaultStateRequestTimeout);
 
-    public static AgentHttpServerOptions ForLoopback(int port)
+    public static AgentHttpServerOptions ForLoopback(int port) => ForLoopback(port, DefaultStateRequestTimeout);
+
+    public static AgentHttpServerOptions ForLoopback(int port, TimeSpan stateRequestTimeout)
     {
         if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
-        return new AgentHttpServerOptions($"http://127.0.0.1:{port}/");
+        if (stateRequestTimeout <= TimeSpan.Zero || stateRequestTimeout == Timeout.InfiniteTimeSpan)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stateRequestTimeout), "State request timeout must be finite and greater than zero.");
+        }
+
+        return new AgentHttpServerOptions($"http://127.0.0.1:{port}/", stateRequestTimeout);
     }
 }
 
@@ -27,6 +35,7 @@ public sealed class AgentHttpServer : IDisposable
 
     private readonly HttpListener listener = new();
     private readonly IAgentStateProvider stateProvider;
+    private readonly TimeSpan stateRequestTimeout;
     private readonly CancellationTokenSource shutdown = new();
     private Task? acceptLoop;
     private int disposed;
@@ -35,6 +44,7 @@ public sealed class AgentHttpServer : IDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
         this.stateProvider = stateProvider ?? throw new ArgumentNullException(nameof(stateProvider));
+        stateRequestTimeout = options.StateRequestTimeout;
         listener.Prefixes.Add(options.Prefix);
     }
 
@@ -88,7 +98,24 @@ public sealed class AgentHttpServer : IDisposable
                 return;
             }
 
-            AgentStateResult result = await stateProvider.GetStateAsync(shutdown.Token).ConfigureAwait(false);
+            using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+            requestCancellation.CancelAfter(stateRequestTimeout);
+
+            AgentStateResult result;
+            try
+            {
+                result = await stateProvider.GetStateAsync(requestCancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested)
+            {
+                await WriteJsonAsync(context.Response, 503, AgentError.StateTimeout).ConfigureAwait(false);
+                return;
+            }
+
             if (result.IsSuccess)
             {
                 await WriteJsonAsync(context.Response, 200, result.State!).ConfigureAwait(false);

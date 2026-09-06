@@ -23,6 +23,7 @@ public sealed record BlockPosition(int X, int Y, int Z);
 public sealed record AgentError(bool Ok, string Code)
 {
     public static AgentError PlayerUnavailable { get; } = new(false, "player_unavailable");
+    public static AgentError StateTimeout { get; } = new(false, "state_timeout");
     public static AgentError NotFound { get; } = new(false, "not_found");
     public static AgentError MethodNotAllowed { get; } = new(false, "method_not_allowed");
     public static AgentError ExecutionError { get; } = new(false, "execution_error");

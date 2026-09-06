@@ -4,6 +4,8 @@ Development endpoint: `http://127.0.0.1:42420`
 
 The listener is intentionally bound to IPv4 loopback only. Milestone 0 has no authentication and must not be exposed on `0.0.0.0`, `::`, or a LAN interface.
 
+`GET /v1/state` has a server-side state snapshot deadline. The development default is **2 seconds** and is configurable through `AgentHttpServerOptions.StateRequestTimeout`. The request token links this deadline with the server shutdown token, so either timeout or mod shutdown cancels the state-provider/main-thread dispatch chain.
+
 ## `GET /v1/state`
 
 Success: HTTP `200`.
@@ -34,6 +36,14 @@ If the client has not entered a world or the controlled player entity is unavail
 ```json
 { "ok": false, "code": "player_unavailable" }
 ```
+
+If the state snapshot does not complete before the configured server-side deadline: HTTP `503`.
+
+```json
+{ "ok": false, "code": "state_timeout" }
+```
+
+A state timeout cancels the linked request token passed through `IAgentStateProvider` to `IMainThreadDispatcher`. If the queued Vintage Story main-thread callback runs later, the dispatcher observes the already-completed cancellation and does not execute the state-reader action.
 
 Transport errors are stable JSON responses: unknown route is HTTP `404` / `not_found`; unsupported method is HTTP `405` / `method_not_allowed`; unexpected request execution failure is HTTP `500` / `execution_error`.
 
