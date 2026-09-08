@@ -10,6 +10,38 @@ Vintage Story client mod
 
 Current endpoint: `GET /v1/state` on `http://127.0.0.1:42420`.
 
+## Quick start on Windows
+
+Prerequisites: Vintage Story and .NET 10 SDK.
+
+Clone the current Milestone 0 branch, build it, run its tests, and install the built mod into the normal user Mods directory:
+
+```powershell
+git clone -b task/first-eye https://github.com/klienkross/vintage-story-mcp.git
+cd vintage-story-mcp
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 -Install
+```
+
+The script looks for the Vintage Story installation in this order:
+
+1. `-VintageStoryPath` supplied explicitly;
+2. the `VINTAGE_STORY` environment variable;
+3. `%APPDATA%\Vintagestory`.
+
+If auto-detection fails:
+
+```powershell
+.\scripts\dev.ps1 -VintageStoryPath "C:\path\to\Vintagestory" -Install
+```
+
+After the script finishes, start Vintage Story and query the bridge:
+
+```powershell
+python client\probe.py state
+```
+
+Use `-SkipTests` if you only want to build/install the mod. Without `-Install`, the script builds but does not copy anything into the user Mods directory.
+
 ## Development setup
 
 The project follows the official Vintage Story SDK-style mod pattern: the game assembly is referenced from `$(VINTAGE_STORY)/VintagestoryAPI.dll`; proprietary Vintage Story binaries are not committed.
